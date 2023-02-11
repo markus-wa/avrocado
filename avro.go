@@ -117,6 +117,7 @@ type Codec struct {
 	Namespace string
 	// TypeNameEncoder will be applied on all type during encoding to transform them from Go name to avro naming convention
 	TypeNameEncoder TypeNameEncoder
+	TagName         string
 }
 
 // NewCodec creates a codec from a schema
@@ -133,7 +134,11 @@ func NewCodec(schemaSpecification string) (*Codec, error) {
 	} else {
 		namespace = namespaceStruct.Namespace
 	}
-	return &Codec{*o, namespace, DefaultTypeNameEncoder}, nil
+	return &Codec{
+		Codec:           *o,
+		Namespace:       namespace,
+		TypeNameEncoder: DefaultTypeNameEncoder,
+	}, nil
 }
 
 // Marshal marshals any go type to avro
@@ -160,7 +165,7 @@ func (c *Codec) encodeUnionHook(kind reflect.Kind, data interface{}) (interface{
 	switch kind {
 	case reflect.Struct:
 		s := structs.New(data)
-		s.TagName = "avro"
+		s.TagName = c.TagName
 		s.EncodeHook = c.encodeUnionHook
 		data = s.Map()
 
@@ -345,7 +350,7 @@ func (c *Codec) unmarshal(codec *goavro.Codec, avro []byte, output interface{}) 
 		return err
 	}
 	config := mapstructure.DecoderConfig{
-		TagName:    "avro",
+		TagName:    c.TagName,
 		DecodeHook: c.decodeUnionHook,
 		Result:     output,
 	}
