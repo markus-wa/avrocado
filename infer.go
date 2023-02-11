@@ -36,12 +36,12 @@ func inferType(t reflect.Type) (string, error) {
 	return "", errors.New("unsupported type")
 }
 
-func inferSchema(t reflect.Type) (s TypedSchema, err error) {
+func inferSchema(tag string, t reflect.Type) (s TypedSchema, err error) {
 	s.Name = t.Name()
 
 	switch t.Kind() {
 	case reflect.Ptr:
-		typ, err := inferSchema(t.Elem())
+		typ, err := inferSchema(tag, t.Elem())
 		if err != nil {
 			return s, err
 		}
@@ -61,12 +61,12 @@ func inferSchema(t reflect.Type) (s TypedSchema, err error) {
 				return s, err
 			}
 
-			s.Fields[i], err = inferSchema(field.Type)
+			s.Fields[i], err = inferSchema(tag, field.Type)
 			if err != nil {
 				return s, err
 			}
 
-			if tag, err := tags.Get("avro"); err == nil {
+			if tag, err := tags.Get(tag); err == nil {
 
 				s.Fields[i].Name = tag.Name
 			} else {
@@ -77,7 +77,7 @@ func inferSchema(t reflect.Type) (s TypedSchema, err error) {
 	case reflect.Slice:
 		s.types = append(s.types, "array")
 
-		typ, err := inferSchema(t.Elem())
+		typ, err := inferSchema(tag, t.Elem())
 		if err != nil {
 			return s, err
 		}
@@ -90,7 +90,7 @@ func inferSchema(t reflect.Type) (s TypedSchema, err error) {
 			return s, errors.New("map key must be string")
 		}
 
-		typ, err := inferSchema(t.Elem())
+		typ, err := inferSchema(tag, t.Elem())
 		if err != nil {
 			return s, err
 		}
@@ -128,8 +128,14 @@ func inferSchema(t reflect.Type) (s TypedSchema, err error) {
 }
 
 // InferSchema will infer the avro schema from a Go struct.
-func InferSchema(v interface{}) (string, error) {
-	s, err := inferSchema(reflect.TypeOf(v))
+// The tag parameter is the name of the struct tag to use for the avro field name.
+// If the tag is an empty string, "avro" will be used.
+func InferSchema(tag string, v interface{}) (string, error) {
+	if tag == "" {
+		tag = "avro"
+	}
+
+	s, err := inferSchema(tag, reflect.TypeOf(v))
 	if err != nil {
 		return "", err
 	}
