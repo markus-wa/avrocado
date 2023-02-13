@@ -3,7 +3,9 @@ package avro
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
+	"strings"
 
 	"github.com/fatih/structtag"
 )
@@ -33,17 +35,17 @@ func inferType(t reflect.Type) (string, error) {
 		return "double", nil
 	}
 
-	return "", errors.New("unsupported type")
+	return "", fmt.Errorf("unsupported type: %s", t.Kind())
 }
 
-func inferSchema(tag string, t reflect.Type) (s TypedSchema, err error) {
+func inferSchema(fallbackTag string, t reflect.Type, items, values []string) (s TypedSchema, err error) {
 	s.Name = t.Name()
 
 	switch t.Kind() {
 	case reflect.Ptr:
-		typ, err := inferSchema(tag, t.Elem())
+		typ, err := inferSchema(fallbackTag, t.Elem(), nil, nil)
 		if err != nil {
-			return s, err
+			return s, fmt.Errorf("ptr: %w", err)
 		}
 
 		s.types = append(s.types, typ)
@@ -58,31 +60,74 @@ func inferSchema(tag string, t reflect.Type) (s TypedSchema, err error) {
 
 			tags, err := structtag.Parse(string(field.Tag))
 			if err != nil {
-				return s, err
+				return s, fmt.Errorf("struct: %w", err)
 			}
 
-			s.Fields[i], err = inferSchema(tag, field.Type)
-			if err != nil {
-				return s, err
-			}
+			var (
+				name        string
+				fieldValues []string
+				fieldItems  []string
+			)
 
-			if tag, err := tags.Get(tag); err == nil {
+			if tag, err := tags.Get("avro"); err == nil {
+				name = tag.Name
 
-				s.Fields[i].Name = tag.Name
+				for _, opt := range tag.Options {
+					if strings.HasPrefix(opt, "type=") {
+						typeStr := strings.TrimPrefix(opt, "type=")
+						types := strings.Split(typeStr, "|")
+
+						for _, t := range types {
+							s.Fields[i].types = append(s.Fields[i].types, t)
+						}
+					}
+				}
+
+				for _, opt := range tag.Options {
+					if strings.HasPrefix(opt, "values=") {
+						valuesStr := strings.TrimPrefix(opt, "values=")
+						fieldValues = strings.Split(valuesStr, "|")
+					}
+				}
+
+				for _, opt := range tag.Options {
+					if strings.HasPrefix(opt, "items=") {
+						itemsStr := strings.TrimPrefix(opt, "items=")
+						fieldItems = strings.Split(itemsStr, "|")
+					}
+				}
+			} else if tag, err := tags.Get(fallbackTag); err == nil {
+				name = tag.Name
 			} else {
-				s.Fields[i].Name = field.Name
+				name = field.Name
 			}
+
+			if s.Fields[i].types == nil {
+				s.Fields[i], err = inferSchema(fallbackTag, field.Type, fieldItems, fieldValues)
+				if err != nil {
+					return s, fmt.Errorf("struct: %w", err)
+				}
+			}
+
+			s.Fields[i].Name = name
 		}
 
 	case reflect.Slice:
 		s.types = append(s.types, "array")
 
-		typ, err := inferSchema(tag, t.Elem())
-		if err != nil {
-			return s, err
+		if items != nil {
+			for _, i := range items {
+				s.items = append(s.items, i)
+			}
+		} else {
+			typ, err := inferSchema(fallbackTag, t.Elem(), nil, nil)
+			if err != nil {
+				return s, fmt.Errorf("slice: %w", err)
+			}
+
+			s.items = append(s.items, typ)
 		}
 
-		s.items = append(s.items, typ)
 	case reflect.Map:
 		s.types = append(s.types, "map")
 
@@ -90,17 +135,23 @@ func inferSchema(tag string, t reflect.Type) (s TypedSchema, err error) {
 			return s, errors.New("map key must be string")
 		}
 
-		typ, err := inferSchema(tag, t.Elem())
-		if err != nil {
-			return s, err
-		}
+		if values != nil {
+			for _, v := range values {
+				s.values = append(s.values, v)
+			}
+		} else {
+			typ, err := inferSchema(fallbackTag, t.Elem(), nil, nil)
+			if err != nil {
+				return s, fmt.Errorf("map: %w", err)
+			}
 
-		s.values = append(s.values, typ)
+			s.values = append(s.values, typ)
+		}
 
 	default:
 		typ, err := inferType(t)
 		if err != nil {
-			return s, err
+			return s, fmt.Errorf("default: %w", err)
 		}
 
 		s.types = append(s.types, typ)
@@ -128,21 +179,17 @@ func inferSchema(tag string, t reflect.Type) (s TypedSchema, err error) {
 }
 
 // InferSchema will infer the avro schema from a Go struct.
-// The tag parameter is the name of the struct tag to use for the avro field name.
-// If the tag is an empty string, "avro" will be used.
-func InferSchema(tag string, v interface{}) (string, error) {
-	if tag == "" {
-		tag = "avro"
-	}
-
-	s, err := inferSchema(tag, reflect.TypeOf(v))
+// The fallbackTag parameter is the name of the struct tag to use if the avro tag is not present.
+// The v parameter is the struct to infer the schema from.
+func InferSchema(fallbackTag string, v interface{}) (string, error) {
+	s, err := inferSchema(fallbackTag, reflect.TypeOf(v), nil, nil)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("infer schema: %w", err)
 	}
 
 	b, err := json.Marshal(s)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("marshal schema: %w", err)
 	}
 
 	return string(b), nil
