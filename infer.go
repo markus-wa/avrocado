@@ -107,6 +107,10 @@ func inferSchema(fallbackTag string, t reflect.Type, items, values []string) (s 
 				if err != nil {
 					return s, fmt.Errorf("struct: %w", err)
 				}
+			} else if len(s.Fields[i].types) == 1 {
+				s.Fields[i].Type = s.Fields[i].types[0]
+			} else {
+				s.Fields[i].Type = s.Fields[i].types
 			}
 
 			s.Fields[i].Name = name
